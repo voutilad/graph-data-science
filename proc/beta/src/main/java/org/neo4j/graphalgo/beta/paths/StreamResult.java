@@ -28,6 +28,7 @@ import org.neo4j.graphdb.Transaction;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 import static org.neo4j.graphalgo.beta.paths.PathFactory.create;
@@ -71,12 +72,11 @@ public final class StreamResult {
     }
 
     public static class Builder {
-        private long relationshipIdOffset;
+        private static final AtomicLong REL_ID = new AtomicLong(1);
         private final IdMapping idMapping;
         private final Transaction transaction;
 
         public Builder(IdMapping idMapping, Transaction transaction) {
-            this.relationshipIdOffset = -1L;
             this.idMapping = idMapping;
             this.transaction = transaction;
         }
@@ -85,6 +85,7 @@ public final class StreamResult {
             var nodeIds = pathResult.nodeIds();
             var costs = pathResult.costs();
             var pathIndex = pathResult.index();
+            var relCount = nodeIds.length > 1 ? nodeIds.length - 1 : 0;
 
             var relationshipType = RelationshipType.withName(formatWithLocale("PATH_%d", pathIndex));
 
@@ -95,15 +96,22 @@ public final class StreamResult {
 
             Path path = null;
             if (createCypherPath) {
+                // In the rare case the value would wrap, reset it to 1
+                var relationshipIdOffset = REL_ID.getAndUpdate(val -> {
+                   if (val > Long.MAX_VALUE - relCount) {
+                       return 1;
+                   } else {
+                       return val + relCount;
+                   }
+                });
                 path = create(
                     transaction,
-                    relationshipIdOffset,
+                    -relationshipIdOffset,
                     nodeIds,
                     costs,
                     relationshipType,
                     COST_PROPERTY_NAME
                 );
-                relationshipIdOffset -= path.length();
             }
 
             return new StreamResult(
